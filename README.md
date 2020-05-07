@@ -5,7 +5,7 @@ WWU CSCI department cluster.
 # **Usage Examples**
 ```sh
 fly.py --command "/bin/echo test"
-fly.py --command "/path/to/train_cool_model.py train.npy dev.npy" -gpus 1 -gpu_mem 11 -cores 2
+fly.py --command "/path/to/train_cool_model.py train.npy dev.npy" --gpus 1 --gpu_mem 11 --cores 2
 fly.py --commands_file commands.txt --conda /cluster/home/$(whoami)/anaconda3 --conda_name CondaEnvName
 ```
 
@@ -25,8 +25,20 @@ fly.py --commands_file commands.txt --conda /cluster/home/$(whoami)/anaconda3 --
 
 # **Helpful Condor Commands**
 * condor_q -> check current queue
+  * You can watch your status with ``watch condor_q''
 * condor_status -> check which computers are being used
-* condor_submit my.job
+* condor_ssh_to_job -> ssh to the machine a given job is on (e.g. to check top or nvidia-smi)
+
+# **fly Output Files**
+In the output directory (defaults to .condor_jobs), you will see these files of the format USER-JOBNAME.EXT
+* USER is your username
+* JOBNAME is specified via the --name flag, but defaults to YYYYMMDD-HHmm
+* EXT is one of the following
+  * err - the contents of your command's standard out and any condor error output
+  * job - the job file automatically created for you 
+  * log - condor's logging
+  * out - the contents of your command's standard out
+  * sh - the wrapper script that actually calls your command(s)
 
 
 # **Current Cluster Status:**
