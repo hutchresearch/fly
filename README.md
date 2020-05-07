@@ -3,7 +3,10 @@ fly.py is a command-line tool that simplifies dispatching condor jobs to the
 WWU CSCI department cluster.
 
 # **Usage Examples**
-* fly.py --commands_file commands_to_run.txt --gpus 1 --gpu_mem 7 --cores 4 --conda /cluster/home/username/anaconda3 --conda_name CondaEnvName
+```sh
+./fly.py --command "/bin/echo test"
+fly.py --commands_file commands_to_run.txt --gpus 1 --gpu_mem 7 --cores 4 --conda /cluster/home/username/anaconda3 --conda_name CondaEnvName
+```
 
 # **Tips:**
 * Condor must be able to run the commands on the remote machine, so please
