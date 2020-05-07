@@ -28,7 +28,8 @@ Call ``fly.py -h`` to see all of the options available.
 # **Helpful Condor Commands**
 * condor_q -> check current queue
   * You can watch your status with ``watch condor_q``
- * condor_q -hold -> check what error caused your job to be placed into the holding queue
+* condor_q -hold -> check what error caused your job to be placed into the holding queue
+* condor_q -better-analyze -> see how many machines can run the job you submitted and why
 * condor_status -> check which computers are being used
 * condor_ssh_to_job -> ssh to the machine a given job is on (e.g. to check top or nvidia-smi)
 
