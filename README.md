@@ -31,7 +31,7 @@ Call ``fly.py -h`` to see all of the options available.
 * condor_q -hold -> check what error caused your job to be placed into the holding queue
 * condor_q -better-analyze -> see how many machines can run the job you submitted and why
 * condor_status -> check which computers are being used
-* condor_ssh_to_job ``job_id_number`` -> ssh to the machine a given job is on (e.g. to check top or nvidia-smi)
+* condor_ssh_to_job (job_id_number) -> ssh to the machine a given job is on (e.g. to check top or nvidia-smi)
 
 # **fly Output Files**
 In the output directory (defaults to .condor_jobs), you will see these files of the format USER-JOBNAME.EXT
