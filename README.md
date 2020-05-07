@@ -4,8 +4,9 @@ WWU CSCI department cluster.
 
 # **Usage Examples**
 ```sh
-./fly.py --command "/bin/echo test"
-fly.py --commands_file commands_to_run.txt --gpus 1 --gpu_mem 7 --cores 4 --conda /cluster/home/username/anaconda3 --conda_name CondaEnvName
+fly.py --command "/bin/echo test"
+fly.py --command "/path/to/train_cool_model.py train.npy dev.npy" -gpus 1 -gpu_mem 11 -cores 2
+fly.py --commands_file commands.txt --conda /cluster/home/$(whoami)/anaconda3 --conda_name CondaEnvName
 ```
 
 # **Tips:**
