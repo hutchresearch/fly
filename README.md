@@ -11,13 +11,13 @@ fly.py --commands_file commands.txt --conda /cluster/home/$(whoami)/anaconda3 --
 
 # **Tips:**
 * Condor must be able to run the commands on the remote machine, so please
-  * Make sure you have a proper ``#!'' at the top of any scripts you wish to run
+  * Make sure you have a proper ``#!`` at the top of any scripts you wish to run
     via condor.
     * E.g. ``#! /usr/bin/env python3``
   * Make sure you have given the execute permission to your user for any binary
     or script you wish to run via condor.
   * Please provide the absolute path for the command you wish to run
-    * You may use ``which command'' to find the absolute path for command
+    * You may use ``which command`` to find the absolute path for command
 * When a job submitted to condor prints to stdout, it will be written to the
   condor_jobs/*.out file, but only once the job has completed.
 * When a job submitted to condor has an error, it will be written to the
@@ -25,7 +25,7 @@ fly.py --commands_file commands.txt --conda /cluster/home/$(whoami)/anaconda3 --
 
 # **Helpful Condor Commands**
 * condor_q -> check current queue
-  * You can watch your status with ``watch condor_q''
+  * You can watch your status with ``watch condor_q``
 * condor_status -> check which computers are being used
 * condor_ssh_to_job -> ssh to the machine a given job is on (e.g. to check top or nvidia-smi)
 
@@ -39,11 +39,6 @@ In the output directory (defaults to .condor_jobs), you will see these files of 
   * log - condor's logging
   * out - the contents of your command's standard out
   * sh - the wrapper script that actually calls your command(s)
-
-
-# **Current Cluster Status:**
-* CF and Hutch Labs: Working
-* CSCI Cluster: Working
 
 
 ### Condor Documentation:
