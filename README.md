@@ -9,6 +9,7 @@ fly.py --command "/path/to/train_cool_model.py train.npy dev.npy" --gpus 1 --gpu
 fly.py --commands_file commands.txt --venv /cluster/home/$(whoami)/venv
 fly.py --commands_file commands.txt --conda /cluster/home/$(whoami)/anaconda3 --conda_name CondaEnvName
 ```
+Call ``fly.py -h`` to see all of the options available.
 
 # **Tips:**
 * Condor must be able to run the commands on the remote machine, so please
