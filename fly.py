@@ -48,7 +48,6 @@ def main():
         os.system("condor_submit " + job_fn)
     elif args.J > 1:
         dag_fn = make_dag_file(args.J,job_options)
-#        os.system("condor_submit_dag " + dag_fn)
         os.system("condor_submit_dag -maxjobs %d %s" % (args.J,dag_fn))
 
 def make_dag_file(J,job_options):
@@ -81,17 +80,13 @@ def make_job_dir(condor_dir):
     return job_dir
 
 
-#def make_job_file(args):
-def make_job_file(job_dir,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name=None,venv=None,conda=None,conda_name=None,commands_fn=None,command=None,queue_count=1,job_num=0):
+def make_job_file(job_dir,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name=None,venv=None,conda=None,\
+        conda_name=None,commands_fn=None,command=None,queue_count=1,job_num=0):
     """ Creates the condor_submit file and shell script wrapper for the job.
 
         Returns:
             file_name: The string path to the created condor_submit file.
     """
-
-    # Confirm proper run location
-    if os.uname().nodename != "csci-head.cluster.cs.wwu.edu":
-        sys.exit("Jobs must be dispatched from csci-head.cluster.cs.wwu.edu")
 
     # set up job fn
     job_path = job_dir + "/" + str(job_num)
@@ -264,18 +259,21 @@ def valid_args(args):
         is_valid = False
     if args.gpus < 0:
         print("\tError: Invalid number of GPUs specified:", args.gpus)
-        is_valid = false
+        is_valid = False
     if args.gpu_mem < 0:
         print("\tError: Invalid amount of GPU memory specified:", args.gpus)
-        is_valid = false
+        is_valid = False
+    if args.J < 1:
+        print("\tError: Invalid number of concurrent jobs specified:", args.J)
+        is_valid = False
 
     if args.commands_fn is None and args.J > 1:
         print("\tThe --J flag only works with a commands file")
-        is_valid = false
+        is_valid = False
 
     if args.commands_fn is not None and not os.path.exists(args.commands_fn):
         print("\tCouldn't find the commands file")
-        is_valid = false
+        is_valid = False
     
     return is_valid
 
