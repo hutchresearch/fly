@@ -15,35 +15,74 @@ def main():
     """ Main Function:
             Performs the heavy lifting for the submission of jobs to condor.
     """
+    # Confirm proper run location
+    if os.uname().nodename != "csci-head.cluster.cs.wwu.edu":
+        sys.exit("Jobs must be dispatched from csci-head.cluster.cs.wwu.edu")
+
+    # Parse args
     args = parse_all_args()
     if not valid_args(args):
         sys.exit("Invalid arguments")
 
+    # Create and launch job (or dag of jobs)
+    job_dir = make_job_dir(args.condor_dir)
+
     job_options = {
-        'condor_dir'    : args.condor_dir,
-        'cores'         : args.cores,
-        'mem'           : args.mem,
-        'gpus'          : args.gpus,
-        'gpu_mem'       : args.gpu_mem,
-        'low_prio'      : args.low_prio,
-        'requirements'  : args.requirements,
-        'rank'          : args.rank,
-        'venv'          : args.venv,
-        'conda'         : args.conda,
-        'conda_name'    : args.conda_name,
-        'commands_fn'   : args.commands_fn,
-        'command'       : args.command,
-        'queue_count'   : args.queue_count}
+        'job_dir'      : job_dir,
+        'cores'        : args.cores,
+        'mem'          : args.mem,
+        'gpus'         : args.gpus,
+        'gpu_mem'      : args.gpu_mem,
+        'low_prio'     : args.low_prio,
+        'requirements' : args.requirements,
+        'rank'         : args.rank,
+        'venv'         : args.venv,
+        'conda'        : args.conda,
+        'conda_name'   : args.conda_name,
+        'commands_fn'  : args.commands_fn,
+        'command'      : args.command,
+        'queue_count'  : args.queue_count}
 
-    job_fn = make_job_file(**job_options)
-    os.system("condor_submit " + job_fn)
-    return
+    if args.J == 1:
+        job_fn  = make_job_file(**job_options)
+        os.system("condor_submit " + job_fn)
+    elif args.J > 1:
+        dag_fn = make_dag_file(args.J,job_options)
+#        os.system("condor_submit_dag " + dag_fn)
+        os.system("condor_submit_dag -maxjobs %d %s" % (args.J,dag_fn))
 
+def make_dag_file(J,job_options):
+    dag_fn = job_options['job_dir'] + "/dagman.dag"
+    with open(dag_fn,"w") as dag_file:
+        with open(job_options['commands_fn']) as commands_file:
+            for i,line in enumerate(commands_file):
+                job_options['commands_fn'] = None
+                job_options['command'] = line.rstrip()
+                job_options['job_num'] = i
+                job_fn  = make_job_file(**job_options)
+                print("JOB %d %s" % (i,job_fn),file=dag_file)
+                print("CATEGORY %d limited" % i,file=dag_file)
+        print("MAXJOBS limited %d" % J,file=dag_file)
 
+    return dag_fn
+
+def make_job_dir(condor_dir):
+    # Construct job name
+    job_dir = None
+    while True:
+        job_name = getpass.getuser() + "_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        job_dir  = os.path.join(condor_dir, job_name)
+        if not os.path.exists(job_dir):
+            break
+
+    if not os.path.isdir(job_dir):
+        os.makedirs(job_dir)
+
+    return job_dir
 
 
 #def make_job_file(args):
-def make_job_file(condor_dir,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name=None,venv=None,conda=None,conda_name=None,commands_fn=None,command=None,queue_count=1):
+def make_job_file(job_dir,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name=None,venv=None,conda=None,conda_name=None,commands_fn=None,command=None,queue_count=1,job_num=0):
     """ Creates the condor_submit file and shell script wrapper for the job.
 
         Returns:
@@ -54,22 +93,9 @@ def make_job_file(condor_dir,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,n
     if os.uname().nodename != "csci-head.cluster.cs.wwu.edu":
         sys.exit("Jobs must be dispatched from csci-head.cluster.cs.wwu.edu")
 
-    # Construct job name
-    job_name = None
-    job_path = None
-    job_fn   = None
-    if name is not None:
-        job_name = getpass.getuser() + "_" + name.strip()
-    else:
-        while True:
-            job_name = getpass.getuser() + "_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            job_path = os.path.join(condor_dir, job_name)
-            job_fn   = job_path + ".job"
-            if not os.path.exists(job_fn):
-                break
-
-    if not os.path.isdir(condor_dir):
-        os.mkdir(condor_dir)
+    # set up job fn
+    job_path = job_dir + "/" + str(job_num)
+    job_fn   = job_path + ".job"
     job_file = open(job_fn, "w")
 
     # Condor Settings
@@ -165,6 +191,10 @@ def parse_all_args():
                         type=str,
                         help="Dir to store condor job and log files. [default: .condor_jobs]",
                         default=".condor_jobs")
+    parser.add_argument("--J",
+                        type=int,
+                        help="Maximum number of concurrent jobs (int) [default: 1]",
+                        default=1)
     parser.add_argument("--cores",
                         type=int,
                         help="Number of CPU cores to allocate. (int) [default: 1]",
@@ -237,6 +267,10 @@ def valid_args(args):
         is_valid = false
     if args.gpu_mem < 0:
         print("\tError: Invalid amount of GPU memory specified:", args.gpus)
+        is_valid = false
+
+    if args.commands_fn is None and args.J > 1:
+        print("\tThe --J flag only works with a commands file")
         is_valid = false
 
     if args.commands_fn is not None and not os.path.exists(args.commands_fn):
