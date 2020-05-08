@@ -10,6 +10,7 @@ from datetime import datetime
 import getpass
 import os
 import stat
+import sys
 
 def main():
     """ Main Function:
@@ -17,18 +18,19 @@ def main():
     """
     # Confirm proper run location
     if os.uname().nodename != "csci-head.cluster.cs.wwu.edu":
-        sys.exit("Jobs must be dispatched from csci-head.cluster.cs.wwu.edu")
+        sys.exit("EXITING: Jobs must be dispatched from csci-head.cluster.cs.wwu.edu")
 
     # Parse args
     args = parse_all_args()
     if not valid_args(args):
-        sys.exit("Invalid arguments")
+        sys.exit("EXITING: Invalid arguments")
 
     # Create and launch job (or dag of jobs)
     job_dir = make_job_dir(args.condor_dir)
 
     job_options = {
         'job_dir'      : job_dir,
+        'job_name'     : args.name,
         'cores'        : args.cores,
         'mem'          : args.mem,
         'gpus'         : args.gpus,
@@ -41,16 +43,22 @@ def main():
         'conda_name'   : args.conda_name,
         'commands_fn'  : args.commands_fn,
         'command'      : args.command,
-        'queue_count'  : args.queue_count}
+        'queue_count'  : args.queue_count
+        }
 
-    if args.J == 1:
+    if args.J == 0:
         job_fn  = make_job_file(**job_options)
         os.system("condor_submit " + job_fn)
-    elif args.J > 1:
+    elif args.J >= 1:
         dag_fn = make_dag_file(args.J,job_options)
         os.system("condor_submit_dag -maxjobs %d %s" % (args.J,dag_fn))
+    return
+
 
 def make_dag_file(J,job_options):
+    """ Make DAG File:
+            Creates the dag file
+    """
     dag_fn = job_options['job_dir'] + "/dagman.dag"
     with open(dag_fn,"w") as dag_file:
         with open(job_options['commands_fn']) as commands_file:
@@ -66,7 +74,11 @@ def make_dag_file(J,job_options):
     return dag_fn
 
 def make_job_dir(condor_dir):
-    # Construct job name
+    """ Creates the .condor_jobs/job_dir folder
+
+        Returns:
+            job_dir: Path to the new dir to hold the generated files
+    """
     job_dir = None
     while True:
         job_name = getpass.getuser() + "_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -80,22 +92,21 @@ def make_job_dir(condor_dir):
     return job_dir
 
 
-def make_job_file(job_dir,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name=None,venv=None,conda=None,\
-        conda_name=None,commands_fn=None,command=None,queue_count=1,job_num=0):
+def make_job_file(job_dir,job_name,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name=None,venv=None,\
+    conda=None,conda_name=None,commands_fn=None,command=None,queue_count=1,job_num=0):
     """ Creates the condor_submit file and shell script wrapper for the job.
 
         Returns:
             file_name: The string path to the created condor_submit file.
     """
-
-    # set up job fn
+    # Set up job file
     job_path = job_dir + "/" + str(job_num)
     job_fn   = job_path + ".job"
     job_file = open(job_fn, "w")
 
     # Condor Settings
-    if name is not None:
-        job_file.write("batch_name = \"" + name.strip() +"\"\n")
+    if job_name is not None:
+        job_file.write("batch_name = \"" + job_name.strip() +"\"\n")
     job_file.write("request_cpus = " + str(cores) + "\n")
     job_file.write("request_memory = " + str(mem) + " GB\n")
     job_file.write("request_gpus = " + str(gpus) + "\n")
@@ -144,6 +155,7 @@ def make_job_file(job_dir,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name
     job_file.close()
     return job_fn 
 
+
 def parse_all_args():
     """ Parses all arguments.
 
@@ -188,8 +200,8 @@ def parse_all_args():
                         default=".condor_jobs")
     parser.add_argument("--J",
                         type=int,
-                        help="Maximum number of concurrent jobs (int) [default: 1]",
-                        default=1)
+                        help="Maximum number of concurrent jobs (int) [default: 0 --> unlimited]",
+                        default=0)
     parser.add_argument("--cores",
                         type=int,
                         help="Number of CPU cores to allocate. (int) [default: 1]",
@@ -231,23 +243,28 @@ def valid_args(args):
     """
     is_valid = True
     # Commands Options
-    if args.commands_fn is not None:
-        if not os.path.exists(args.commands_fn):
-            print("\tERROR: Unable to find the specified command file:", args.commands_fn)
-            is_valid = False
+    if args.commands_fn is not None and not os.path.exists(args.commands_fn):
+        print("\tError: Unable to find the specified command file:", args.commands_fn)
+        is_valid = False
+    if args.commands_fn is None and args.J > 1:
+        print("\tThe --J flag only works with a commands file")
+        is_valid = False
     if args.queue_count < 1:
-        print("\tERROR: Invalid QUEUE_COUNT. You cannot schedule a job to run less than once.")
+        print("\tError: Invalid QUEUE_COUNT. You cannot schedule a job to run less than once.")
+        is_valid = False
+    if args.queue_count > 1 and args.commands_fn is not None:
+        print("\tError: You cannot run a commands file multiple times with queue count.")
         is_valid = False
     
     # Virtual Environment
     if args.venv is not None and not os.path.exists(args.venv):
-        print("\tERROR: Failed to find the specified venv directory:", args.venv)
+        print("\tError: Failed to find the specified venv directory:", args.venv)
         is_valid = False
     if args.conda is not None and not os.path.exists(args.conda):
-        print("\tERROR: Failed to find the specified venv directory:", args.conda)
+        print("\tError: Failed to find the specified venv directory:", args.conda)
         is_valid = False
     if args.conda is not None and args.venv is not None:
-        print("\tError: You cannot specify both a virtual environment and a anaconda environment")
+        print("\Error: You cannot specify both a virtual environment and a anaconda environment")
         is_valid = False
     
     # System Requirements
@@ -263,16 +280,8 @@ def valid_args(args):
     if args.gpu_mem < 0:
         print("\tError: Invalid amount of GPU memory specified:", args.gpus)
         is_valid = False
-    if args.J < 1:
+    if args.J < 0:
         print("\tError: Invalid number of concurrent jobs specified:", args.J)
-        is_valid = False
-
-    if args.commands_fn is None and args.J > 1:
-        print("\tThe --J flag only works with a commands file")
-        is_valid = False
-
-    if args.commands_fn is not None and not os.path.exists(args.commands_fn):
-        print("\tCouldn't find the commands file")
         is_valid = False
     
     return is_valid
