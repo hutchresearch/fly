@@ -34,16 +34,14 @@ Call ``fly.py -h`` to see all of the options available.
 * condor_ssh_to_job (job_id_number) -> ssh to the machine a given job is on (e.g. to check top or nvidia-smi)
 
 # **fly Output Files**
-In the output directory (defaults to .condor_jobs), you will see these files of the format USER-JOBNAME.EXT
-* USER is your username
-* JOBNAME is specified via the --name flag, but defaults to YYYYMMDD-HHmm
+In the condor directory (defaults to .condor_jobs), fly will create an output directory with the format USER_YYYYMMDD_HHmmss_ff (USER is your username, ff is microseconds sections).  Within that, it will produce a set of files of the format NUM.EXT.
+* NUM is the job number.  If you only submit one job, it will be 0.  If you submit N jobs, you will have sets of files for NUM=0,...,N-1.
 * EXT is one of the following
   * err - the contents of your command's standard out and any condor error output
   * job - the job file automatically created for you 
   * log - condor's logging
   * out - the contents of your command's standard out
   * sh - the wrapper script that actually calls your command(s)
-
 
 ### Condor Documentation:
 * [Condor: General](https://htcondor.readthedocs.io/en/stable/)
