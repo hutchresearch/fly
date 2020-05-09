@@ -20,10 +20,7 @@ Call ``fly.py -h`` to see all of the options available.
     or script you wish to run via condor.
   * Please provide the absolute path for the command you wish to run
     * You may use ``which command`` to find the absolute path for command
-* When a job submitted to condor prints to stdout, it will be written to the
-  condor_jobs/*.out file, but only once the job has completed.
-* When a job submitted to condor has an error, it will be written to the
-  condor_jobs/*.err file.
+
 
 # **Helpful Condor Commands**
 * condor_q -> check current queue
@@ -42,6 +39,7 @@ In the condor directory (defaults to .condor_jobs), fly will create an output di
   * log - condor's logging
   * out - the contents of your command's standard out
   * sh - the wrapper script that actually calls your command(s)
+* The *.out files are buffered and may only be written once the job has completed.
 
 ### Condor Documentation:
 * [Condor: General](https://htcondor.readthedocs.io/en/stable/)
