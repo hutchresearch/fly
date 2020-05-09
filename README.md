@@ -40,6 +40,7 @@ In the condor directory (defaults to .condor_jobs), fly will create an output di
   * out - the contents of your command's standard out
   * sh - the wrapper script that actually calls your command(s)
 * The *.out files are buffered and may only be written once the job has completed.
+
 I recommend you design your scripts to write any output logging directly to a file that you specify, instead of relying on standard out or standard error.  If you do so, you may not ever need to inspect any of the files produced for you in the output directory.
 
 ### Condor Documentation:
