@@ -120,9 +120,9 @@ def make_job_file(job_dir,job_name,cores,mem,gpus,gpu_mem,low_prio,requirements,
         job_file.write("rank = " + rank + "\n")
 
     # Log Files
-    job_file.write("output = " + job_path + ".out\n")
-    job_file.write("error  = " + job_path + ".err\n")
-    job_file.write("log    = " + job_path + ".log\n")
+    job_file.write("output = " + job_path + "_$(Process).out\n")
+    job_file.write("error  = " + job_path + "_$(Process).err\n")
+    job_file.write("log    = " + job_path + "_$(Process).log\n")
 
     # Shell Script Wrapper
     shell_wrapper = os.open(job_path + ".sh", flags=os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode=stat.S_IRWXU)
