@@ -201,10 +201,6 @@ def parse_all_args():
     parser.add_argument("--name",
                         type=str,
                         help="A name for the condor job. (str)")
-    parser.add_argument("--condor_dir",
-                        type=str,
-                        help="Dir to store condor job and log files. [default: .condor_jobs]",
-                        default=".condor_jobs")
     parser.add_argument("--J",
                         type=int,
                         help="Maximum number of concurrent jobs (int) [default: 0 --> unlimited]",
