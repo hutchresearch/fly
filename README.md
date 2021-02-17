@@ -29,6 +29,7 @@ Call ``fly.py -h`` to see all of the options available.
 * condor_q -better-analyze -> see how many machines can run the job you submitted and why
 * condor_status -> check which computers are being used
 * condor_ssh_to_job (job_id_number) -> ssh to the machine a given job is on (e.g. to check top or nvidia-smi)
+* condor_rm (job_id_number) -> cancel a running job
 
 # **fly Output Files**
 In the condor directory (defaults to .condor_jobs), fly will create an output directory with the format USER_YYYYMMDD_HHmmss_ff (USER is your username, ff is microseconds sections).  Within that, it will produce a set of files of the format NUM.EXT.
