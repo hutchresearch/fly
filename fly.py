@@ -43,6 +43,7 @@ def main():
         'conda_name'   : args.conda_name,
         'commands_fn'  : args.commands_fn,
         'command'      : args.command,
+        'interactive'  : args.interactive,
         'queue_count'  : args.queue_count
         }
 
@@ -93,7 +94,7 @@ def make_job_dir(condor_dir):
 
 
 def make_job_file(job_dir,job_name,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name=None,venv=None,\
-    conda=None,conda_name=None,commands_fn=None,command=None,queue_count=1,job_num=0):
+    conda=None,conda_name=None,commands_fn=None,command=None,queue_count=1,job_num=0,interactive=False):
     """ Creates the condor_submit file and shell script wrapper for the job.
 
         Returns:
@@ -151,9 +152,12 @@ def make_job_file(job_dir,job_name,cores,mem,gpus,gpu_mem,low_prio,requirements,
             job_file.write("queue " + str(queue_count))
         elif queue_count == 1:
             job_file.write("queue")
+    elif interactive:
+        job_file.write("queue")
+        job_fn = f"-i {job_fn}"
 
     job_file.close()
-    return job_fn 
+    return job_fn
 
 
 def parse_all_args():
@@ -172,17 +176,20 @@ def parse_all_args():
     command.add_argument("--commands_fn",
                         type=str,
                         help="The path to a file containing a list of arguments for the executable (str) (optional)")
+    command.add_argument("--interactive", "-i",
+                        action="store_true",
+                        help="Request job to run an interactive shell job (flag)")
 
     # Environment
     run_env = parser.add_mutually_exclusive_group(required=False)
     run_env.add_argument("--venv",
-                         help="Path to the virtual environment to be used (str)",
+                         help="The path to the virtual environment to be used (str)",
                          type=str)
     run_env.add_argument("--conda",
-                         help="Path to the virtual environment to be used (str)",
+                         help="The path to the virtual environment to be used (str)",
                          type=str)
     parser.add_argument("--conda_name",
-                        help="If using conda, name of the conda environment to activate (str) [default: \"\"]",
+                        help="If using conda, the name of the conda environment to activate (str) [default: \"\"]",
                         type=str)
 
     # Job Priority
@@ -193,7 +200,7 @@ def parse_all_args():
     # Condor Settings
     parser.add_argument("--name",
                         type=str,
-                        help="Name for the condor job. (str)")
+                        help="A name for the condor job. (str)")
     parser.add_argument("--condor_dir",
                         type=str,
                         help="Dir to store condor job and log files. [default: .condor_jobs]",
@@ -204,19 +211,19 @@ def parse_all_args():
                         default=0)
     parser.add_argument("--cores",
                         type=int,
-                        help="Number of CPU cores to allocate. (int) [default: 1]",
-                        default=1)
+                        help="The number of CPU cores to allocate. (int) [default: 2]",
+                        default=2)
     parser.add_argument("--mem",
                         type=int,
-                        help="Amount of main memory to allocate, in GB. (int) [default: 8]",
+                        help="The amount of main memory to allocate, in GB. (int) [default: 8]",
                         default=8)
     parser.add_argument("--gpus",
                         type=int,
-                        help="Number of GPUs needed. (int) [default: 0]",
+                        help="The number of GPUs needed. (int) [default: 0]",
                         default=0)
     parser.add_argument("--gpu_mem",
                         type=int,
-                        help="Amount of GPU memory needed, in GB. (int) [default: 0]",
+                        help="The amount of GPU memory needed for job, in GB. (int) [default: 0]",
                         default=0)
     parser.add_argument("--requirements",
                         type=str,
@@ -230,7 +237,10 @@ def parse_all_args():
                         type=int,
                         help="The number of times to queue the command to run. (NOTE: Only works with the '--command' flag) (int) [default: 1]",
                         default=1)
-
+    parser.add_argument("--condor_dir",
+                        type=str,
+                        help="Directory to store condor job and log files. [default: .condor_jobs]",
+                        default=".condor_jobs")
 
     return parser.parse_args()
 
