@@ -9,9 +9,12 @@ import argparse
 from datetime import datetime
 import getpass
 import os
+import shlex
 import socket
 import stat
+import subprocess
 import sys
+import tempfile
 
 CLUSTER_HEAD = "csci-head.cluster.cs.wwu.edu"
 
@@ -33,17 +36,20 @@ def main():
     """ Main Function:
             Performs the heavy lifting for the submission of jobs to condor.
     """
-    # Confirm proper run location
-    if not on_cluster_head():
-        sys.exit("EXITING: Jobs must be dispatched from " + CLUSTER_HEAD)
-
     # Parse args
     args = parse_all_args()
     if not valid_args(args):
         sys.exit("EXITING: Invalid arguments")
 
+    # Confirm proper run location (previews work anywhere)
+    if not args.pretend and not on_cluster_head():
+        sys.exit("EXITING: Jobs must be dispatched from " + CLUSTER_HEAD)
+
     # Create and launch job (or dag of jobs)
-    job_dir = make_job_dir(args.condor_dir)
+    if args.pretend:
+        job_dir = tempfile.mkdtemp(prefix="fly_pretend_")
+    else:
+        job_dir = make_job_dir(args.condor_dir)
 
     job_options = {
         'job_dir'      : job_dir,
@@ -65,12 +71,48 @@ def main():
         }
 
     if args.J == 0:
-        job_fn  = make_job_file(**job_options)
-        os.system("condor_submit " + job_fn)
-    elif args.J >= 1:
-        dag_fn = make_dag_file(args.J,job_options)
-        os.system("condor_submit_dag -maxjobs %d %s" % (args.J,dag_fn))
-    return
+        submit_fn = make_job_file(**job_options)
+        if args.interactive:
+            cmd = ["condor_submit", "-interactive", submit_fn]
+        else:
+            cmd = ["condor_submit", submit_fn]
+    else:
+        submit_fn = make_dag_file(args.J,job_options)
+        cmd = ["condor_submit_dag", "-maxjobs", str(args.J), submit_fn]
+
+    if args.pretend:
+        show_pretend(job_dir, cmd)
+        return 0
+    return submit(cmd)
+
+
+def submit(cmd):
+    """ Runs a condor submit command, passing its output through.
+
+        Returns:
+            int: the command's exit status
+    """
+    try:
+        return subprocess.run(cmd).returncode
+    except FileNotFoundError:
+        print("EXITING: %s not found. Are you on %s?" % (cmd[0], CLUSTER_HEAD), file=sys.stderr)
+        return 1
+
+
+def show_pretend(job_dir, cmd):
+    """ Prints the generated files instead of submitting them. """
+    for name in sorted(os.listdir(job_dir)):
+        path = os.path.join(job_dir, name)
+        print("# ==========\n# %s\n# ==========" % path)
+        with open(path) as f:
+            print(f.read())
+    print("# Not submitted. fly would run:\n#   %s" % " ".join(shlex.quote(c) for c in cmd))
+    if cmd[0] == "condor_submit_dag":
+        print("# To check the DAG without submitting it, on %s run:" % CLUSTER_HEAD)
+        print("#   condor_submit_dag -no_submit %s" % shlex.quote(cmd[-1]))
+    else:
+        print("# To check the files with HTCondor's own parser, on %s run:" % CLUSTER_HEAD)
+        print("#   condor_submit -dry-run - %s" % shlex.quote(cmd[-1]))
 
 
 def on_cluster_head():
@@ -108,7 +150,7 @@ def make_job_dir(condor_dir):
     job_dir = None
     while True:
         job_name = getpass.getuser() + "_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        job_dir  = os.path.join(condor_dir, job_name)
+        job_dir  = os.path.join(os.path.abspath(condor_dir), job_name)
         if not os.path.exists(job_dir):
             break
 
@@ -179,7 +221,6 @@ def make_job_file(job_dir,job_name,cores,mem,gpus,gpu_mem,low_prio,requirements,
             job_file.write("queue")
     elif interactive:
         job_file.write("queue")
-        job_fn = f"-i {job_fn}"
 
     job_file.close()
     return job_fn
@@ -235,6 +276,10 @@ def parse_all_args():
             argparse.Namespace: the parsed argument object
     """
     parser = argparse.ArgumentParser()
+    parser.add_argument("--pretend",
+                        action="store_true",
+                        help="Print the generated condor files instead of submitting them. "
+                             "Works on any machine. (flag)")
 
     # Executable Settings
     command = parser.add_mutually_exclusive_group(required=True)
@@ -318,6 +363,11 @@ def valid_args(args):
         boolean: True if all args were assigned valid values, else false.
     """
     is_valid = True
+    # Condor expands $(...) macros in submit-file paths
+    if "$" in os.path.abspath(args.condor_dir):
+        print("\tError: --condor_dir cannot contain '$' (condor would treat it as a macro):", args.condor_dir)
+        is_valid = False
+
     # Commands Options
     if args.commands_fn is not None and not os.path.exists(args.commands_fn):
         print("\tError: Unable to find the specified command file:", args.commands_fn)
@@ -371,4 +421,4 @@ def valid_args(args):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
