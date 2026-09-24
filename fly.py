@@ -45,40 +45,20 @@ def main():
     if not args.pretend and not on_cluster_head():
         sys.exit("EXITING: Jobs must be dispatched from " + CLUSTER_HEAD)
 
-    # Create and launch job (or dag of jobs)
+    # Create and launch the job(s)
     if args.pretend:
         job_dir = tempfile.mkdtemp(prefix="fly_pretend_")
     else:
         job_dir = make_job_dir(args.condor_dir)
 
-    job_options = {
-        'job_dir'      : job_dir,
-        'job_name'     : args.name,
-        'cores'        : args.cores,
-        'mem'          : args.mem,
-        'gpus'         : args.gpus,
-        'gpu_mem'      : args.gpu_mem,
-        'low_prio'     : args.low_prio,
-        'requirements' : args.requirements,
-        'rank'         : args.rank,
-        'venv'         : args.venv,
-        'conda'        : args.conda,
-        'conda_name'   : args.conda_name,
-        'commands_fn'  : args.commands_fn,
-        'command'      : args.command,
-        'interactive'  : args.interactive,
-        'queue_count'  : args.queue_count
-        }
-
-    if args.J == 0:
-        submit_fn = make_job_file(**job_options)
-        if args.interactive:
-            cmd = ["condor_submit", "-interactive", submit_fn]
-        else:
-            cmd = ["condor_submit", submit_fn]
+    submit_fn = make_job_files(job_dir, args, read_commands(args))
+    if args.interactive:
+        if args.venv or args.conda:
+            print("Note: interactive jobs start a plain shell, so fly's environment setup does not run. "
+                  "Activate it yourself once the shell starts.", file=sys.stderr)
+        cmd = ["condor_submit", "-interactive", submit_fn]
     else:
-        submit_fn = make_dag_file(args.J,job_options)
-        cmd = ["condor_submit_dag", "-maxjobs", str(args.J), submit_fn]
+        cmd = ["condor_submit", submit_fn]
 
     if args.pretend:
         show_pretend(job_dir, cmd)
@@ -99,20 +79,21 @@ def submit(cmd):
         return 1
 
 
-def show_pretend(job_dir, cmd):
+def show_pretend(job_dir, cmd, max_commands=5):
     """ Prints the generated files instead of submitting them. """
-    for name in sorted(os.listdir(job_dir)):
-        path = os.path.join(job_dir, name)
+    paths = [os.path.join(job_dir, name) for name in sorted(os.listdir(job_dir))]
+    cmd_dir = os.path.join(job_dir, "cmd")
+    commands = sorted(os.listdir(cmd_dir), key=lambda n: int(n.split(".")[0])) if os.path.isdir(cmd_dir) else []
+    paths = [p for p in paths if p != cmd_dir] + [os.path.join(cmd_dir, n) for n in commands[:max_commands]]
+    for path in paths:
         print("# ==========\n# %s\n# ==========" % path)
         with open(path) as f:
             print(f.read())
+    if len(commands) > max_commands:
+        print("# ... and %d more command files in %s\n" % (len(commands) - max_commands, cmd_dir))
     print("# Not submitted. fly would run:\n#   %s" % " ".join(shlex.quote(c) for c in cmd))
-    if cmd[0] == "condor_submit_dag":
-        print("# To check the DAG without submitting it, on %s run:" % CLUSTER_HEAD)
-        print("#   condor_submit_dag -no_submit %s" % shlex.quote(cmd[-1]))
-    else:
-        print("# To check the files with HTCondor's own parser, on %s run:" % CLUSTER_HEAD)
-        print("#   condor_submit -dry-run - %s" % shlex.quote(cmd[-1]))
+    print("# To check the files with HTCondor's own parser, on %s run:" % CLUSTER_HEAD)
+    print("#   condor_submit -dry-run - %s" % shlex.quote(cmd[-1]))
 
 
 def on_cluster_head():
@@ -122,24 +103,6 @@ def on_cluster_head():
     nodename = os.uname().nodename
     return nodename in ("csci-head", CLUSTER_HEAD) or socket.getfqdn() == CLUSTER_HEAD
 
-
-def make_dag_file(J,job_options):
-    """ Make DAG File:
-            Creates the dag file
-    """
-    dag_fn = job_options['job_dir'] + "/dagman.dag"
-    with open(dag_fn,"w") as dag_file:
-        with open(job_options['commands_fn']) as commands_file:
-            for i,line in enumerate(commands_file):
-                job_options['commands_fn'] = None
-                job_options['command'] = line.rstrip()
-                job_options['job_num'] = i
-                job_fn  = make_job_file(**job_options)
-                print("JOB %d %s" % (i,job_fn),file=dag_file)
-                print("CATEGORY %d limited" % i,file=dag_file)
-        print("MAXJOBS limited %d" % J,file=dag_file)
-
-    return dag_fn
 
 def make_job_dir(condor_dir):
     """ Creates the .condor_jobs/job_dir folder
@@ -160,70 +123,103 @@ def make_job_dir(condor_dir):
     return job_dir
 
 
-def make_job_file(job_dir,job_name,cores,mem,gpus,gpu_mem,low_prio,requirements,rank,name=None,venv=None,\
-    conda=None,conda_name=None,commands_fn=None,command=None,queue_count=1,job_num=0,interactive=False):
-    """ Creates the condor_submit file and shell script wrapper for the job.
+def read_commands(args):
+    """ Returns the commands to run, one per job. A commands file holds one
+        command per line; blank lines and lines starting with # are skipped.
 
         Returns:
-            file_name: The string path to the created condor_submit file.
+            list of str: the commands (empty for an interactive job)
     """
-    # Set up job file
-    job_path = job_dir + "/" + str(job_num)
-    job_fn   = job_path + ".job"
-    job_file = open(job_fn, "w")
+    if args.command is not None:
+        return [args.command]
+    if args.commands_fn is not None:
+        with open(args.commands_fn) as commands_file:
+            lines = commands_file.read().splitlines()
+        return [line for line in lines if line.strip() and not line.lstrip().startswith("#")]
+    return []
 
-    # Condor Settings
-    if job_name is not None:
-        job_file.write("batch_name = \"" + job_name.strip() +"\"\n")
-    job_file.write("request_cpus = " + str(cores) + "\n")
-    job_file.write("request_memory = " + str(mem) + " GB\n")
-    job_file.write("request_gpus = " + str(gpus) + "\n")
-    if low_prio:
-        job_file.write("priority = -10\n")
-    if gpus > 0:
-        job_file.write("require_gpus = " + gpu_constraint(gpu_mem) + "\n")
-    if requirements:
-        job_file.write("requirements = " + requirements + "\n")
-    if rank:
-        job_file.write("rank = " + rank + "\n")
 
-    # Log Files
-    job_file.write("output = " + job_path + "_$(Process).out\n")
-    job_file.write("error  = " + job_path + "_$(Process).err\n")
-    job_file.write("log    = " + job_path + "_$(Process).log\n")
+def write_wrapper(job_dir, args):
+    """ Writes the script condor runs for each job: it sets up the
+        environment, stopping if that fails, then runs command file $1 with
+        bash, so commands behave exactly as they would typed at a bash prompt.
 
-    # Shell Script Wrapper
-    shell_wrapper = os.open(job_path + ".sh", flags=os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode=stat.S_IRWXU)
-    shell_wrapper_text = "#!/usr/bin/env bash\n"
-    if venv is not None:
-        shell_wrapper_text = shell_wrapper_text + "source $PYENV/bin/activate\n"
-        job_file.write("environment=\"PYENV=" + venv.strip() + "\"\n")
-    elif conda is not None:
-        shell_wrapper_text = shell_wrapper_text + "source " + os.path.join(conda.strip(), "etc/profile.d/conda.sh") + "\n"
-        if conda_name is not None:
-            shell_wrapper_text = shell_wrapper_text + "conda activate " + conda_name.strip() + "\n"
-        else:
-            shell_wrapper_text = shell_wrapper_text + "conda activate" + "\n"
-    shell_wrapper_text += "exec \"$@\"\n"
-    os.write(shell_wrapper, bytes(shell_wrapper_text, encoding="utf-8"))
-    os.close(shell_wrapper)
+        Returns:
+            str: path to the wrapper script
+    """
+    def fail(message):
+        return " || fail " + shlex.quote(message)
 
-    # Assign Executable, Arguments, and Queue Commands
-    job_file.write("executable = " + job_path + ".sh\n")
-    if commands_fn is not None:
-        job_file.write("arguments = $(command)\n")
-        job_file.write("queue command from " + commands_fn.strip())
-    elif command is not None:
-        job_file.write("arguments = " + command.strip() + "\n")
-        if queue_count > 1:
-            job_file.write("queue " + str(queue_count))
-        elif queue_count == 1:
-            job_file.write("queue")
-    elif interactive:
-        job_file.write("queue")
+    lines = ["#!/usr/bin/env bash",
+             "# Generated by fly: sets up the environment, then runs command file $1.",
+             'fail() { echo "fly: $*" >&2; exit 1; }']
+    if args.venv is not None:
+        activate = os.path.join(os.path.abspath(args.venv), "bin", "activate")
+        lines.append("source " + shlex.quote(activate) + fail("could not activate venv " + args.venv))
+    elif args.conda is not None:
+        conda_sh = os.path.join(os.path.abspath(args.conda), "etc", "profile.d", "conda.sh")
+        lines.append("source " + shlex.quote(conda_sh) + fail("could not set up conda from " + args.conda))
+        env = args.conda_name if args.conda_name is not None else "base"
+        lines.append("conda activate " + shlex.quote(env) + fail("could not activate conda env " + env))
+    lines.append("exec bash " + shlex.quote(os.path.join(job_dir, "cmd")) + '/"$1".sh')
 
-    job_file.close()
-    return job_fn
+    wrapper_fn = os.path.join(job_dir, "wrapper.sh")
+    fd = os.open(wrapper_fn, flags=os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode=stat.S_IRWXU)
+    with os.fdopen(fd, "w") as wrapper:
+        wrapper.write("\n".join(lines) + "\n")
+    return wrapper_fn
+
+
+def make_job_files(job_dir, args, commands):
+    """ Creates the condor submit file, the wrapper script, and one command
+        file per job (cmd/0.sh, cmd/1.sh, ...). Command text is written
+        verbatim and never passes through condor's own parser.
+
+        Returns:
+            str: path to the submit file
+    """
+    if commands:
+        os.mkdir(os.path.join(job_dir, "cmd"))
+    for i, command in enumerate(commands):
+        with open(os.path.join(job_dir, "cmd", "%d.sh" % i), "w") as command_file:
+            command_file.write(command + "\n")
+
+    lines = []
+    if args.name is not None:
+        lines.append("batch_name = \"" + args.name.strip() + "\"")
+    lines += ["universe = vanilla",
+              "request_cpus = " + str(args.cores),
+              "request_memory = " + str(args.mem) + " GB",
+              "request_gpus = " + str(args.gpus)]
+    if args.low_prio:
+        lines.append("priority = -10")
+    if args.gpus > 0:
+        lines.append("require_gpus = " + gpu_constraint(args.gpu_mem))
+    if args.requirements:
+        lines.append("requirements = " + args.requirements)
+    if args.rank:
+        lines.append("rank = " + args.rank)
+    # Jobs read and write the cluster's shared filesystem directly.
+    lines.append("should_transfer_files = NO")
+    lines += ["executable = " + write_wrapper(job_dir, args),
+              "output = " + os.path.join(job_dir, "$(Process).out"),
+              "error  = " + os.path.join(job_dir, "$(Process).err"),
+              "log    = " + os.path.join(job_dir, "condor.log")]
+    if args.J > 0:
+        lines.append("max_materialize = " + str(args.J))
+    if len(commands) > 1:
+        # One job per command file.
+        lines += ["arguments = $(Process)", "queue " + str(len(commands))]
+    elif commands:
+        # Every repeat runs command file 0.
+        lines += ["arguments = 0", "queue " + str(args.queue_count)]
+    else:
+        lines.append("queue")
+
+    submit_fn = os.path.join(job_dir, "submit.job")
+    with open(submit_fn, "w") as submit_file:
+        submit_file.write("\n".join(lines) + "\n")
+    return submit_fn
 
 
 def gpu_tier(gpu_mem):
@@ -285,10 +281,11 @@ def parse_all_args():
     command = parser.add_mutually_exclusive_group(required=True)
     command.add_argument("--command",
                         type=str,
-                        help="The path to the executable (str)")
+                        help="The command to run, exactly as you would type it at a bash prompt (str)")
     command.add_argument("--commands_fn",
                         type=str,
-                        help="The path to a file containing a list of arguments for the executable (str) (optional)")
+                        help="A file of commands, one per line, each run as its own job. Blank lines and lines "
+                             "starting with # are skipped. (str)")
     command.add_argument("--interactive", "-i",
                         action="store_true",
                         help="Request job to run an interactive shell job (flag)")
@@ -299,10 +296,10 @@ def parse_all_args():
                          help="The path to the virtual environment to be used (str)",
                          type=str)
     run_env.add_argument("--conda",
-                         help="The path to the virtual environment to be used (str)",
+                         help="The path to the conda installation to be used (str)",
                          type=str)
     parser.add_argument("--conda_name",
-                        help="If using conda, the name of the conda environment to activate (str) [default: \"\"]",
+                        help="If using conda, the name of the conda environment to activate (str) [default: base]",
                         type=str)
 
     # Job Priority
@@ -316,7 +313,8 @@ def parse_all_args():
                         help="A name for the condor job. (str)")
     parser.add_argument("--J",
                         type=int,
-                        help="Maximum number of concurrent jobs (int) [default: 0 --> unlimited]",
+                        help="Maximum number of jobs from this batch in the queue at once; the rest are added as "
+                             "earlier ones finish (int) [default: 0 --> unlimited]",
                         default=0)
     parser.add_argument("--cores",
                         type=int,
@@ -346,7 +344,7 @@ def parse_all_args():
                         default="")
     parser.add_argument("--queue_count",
                         type=int,
-                        help="The number of times to queue the command to run. (NOTE: Only works with the '--command' flag) (int) [default: 1]",
+                        help="The number of times to run --command, each as its own job (int) [default: 1]",
                         default=1)
     parser.add_argument("--condor_dir",
                         type=str,
@@ -363,36 +361,52 @@ def valid_args(args):
         boolean: True if all args were assigned valid values, else false.
     """
     is_valid = True
+    # Paths are only checked where the job will run (previews work anywhere).
+    check_paths = on_cluster_head()
     # Condor expands $(...) macros in submit-file paths
     if "$" in os.path.abspath(args.condor_dir):
         print("\tError: --condor_dir cannot contain '$' (condor would treat it as a macro):", args.condor_dir)
         is_valid = False
 
     # Commands Options
-    if args.commands_fn is not None and not os.path.exists(args.commands_fn):
-        print("\tError: Unable to find the specified command file:", args.commands_fn)
+    if args.command is not None and not args.command.strip():
+        print("\tError: --command is empty")
         is_valid = False
-    if args.commands_fn is None and args.J > 1:
-        print("\tThe --J flag only works with a commands file")
-        is_valid = False
+    if args.commands_fn is not None:
+        if not os.path.isfile(args.commands_fn):
+            print("\tError: Unable to find the specified command file:", args.commands_fn)
+            is_valid = False
+        elif not read_commands(args):
+            print("\tError: No commands in", args.commands_fn, "(blank lines and # comments are skipped)")
+            is_valid = False
     if args.queue_count < 1:
         print("\tError: Invalid QUEUE_COUNT. You cannot schedule a job to run less than once.")
         is_valid = False
-    if args.queue_count > 1 and args.commands_fn is not None:
-        print("\tError: You cannot run a commands file multiple times with queue count.")
+    if args.queue_count > 1 and args.command is None:
+        print("\tError: --queue_count only works with --command")
         is_valid = False
-    
+    if args.J > 0 and (args.interactive or (args.command is not None and args.queue_count == 1)):
+        print("\tError: --J limits how many jobs run at once, so it needs --commands_fn or --queue_count > 1")
+        is_valid = False
+
     # Virtual Environment
-    if args.venv is not None and not os.path.exists(args.venv):
-        print("\tError: Failed to find the specified venv directory:", args.venv)
+    if args.conda_name is not None and args.conda is None:
+        print("\tError: --conda_name requires --conda")
         is_valid = False
-    if args.conda is not None and not os.path.exists(args.conda):
-        print("\tError: Failed to find the specified venv directory:", args.conda)
-        is_valid = False
-    if args.conda is not None and args.venv is not None:
-        print("\tError: You cannot specify both a virtual environment and a anaconda environment")
-        is_valid = False
-    
+    env_files = []
+    if args.venv is not None:
+        env_files.append(os.path.join(args.venv, "bin", "activate"))
+    if args.conda is not None:
+        env_files.append(os.path.join(args.conda, "etc", "profile.d", "conda.sh"))
+    for env_file in env_files:
+        if not os.path.isfile(env_file):
+            if check_paths:
+                print("\tError: Environment activation script not found:", env_file)
+                is_valid = False
+            else:
+                print("\tWarning: Environment activation script not found here (fine if it exists on the cluster):",
+                      env_file)
+
     # System Requirements
     if args.cores < 1:
         print("\tError: Invalid number of cores specified:", args.cores)
@@ -414,7 +428,7 @@ def valid_args(args):
               % (args.gpu_mem, ", ".join(str(t) for t in POOL_GPU_TIERS)))
         is_valid = False
     if args.J < 0:
-        print("\tError: Invalid number of concurrent jobs specified:", args.J)
+        print("\tError: Invalid number of jobs to run at once specified:", args.J)
         is_valid = False
     
     return is_valid
