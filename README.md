@@ -11,6 +11,12 @@ fly.py --commands_fn commands.txt --conda /cluster/home/$(whoami)/anaconda3 --co
 ```
 Call ``fly.py -h`` to see all of the options available.
 
+To see what fly would submit without submitting anything, add ``--pretend``.
+It works on any machine and prints the generated condor files; on
+csci-head you can then check them with ``condor_submit -dry-run - FILE``.
+fly exits with condor_submit's exit status, so scripts can detect failed
+submissions.
+
 # **GPUs**
 ``--gpu_mem`` is the card's nominal memory size in GB, as printed on the box
 (e.g. 11 for an RTX 2080 Ti). Requests are rounded up to the next card size
