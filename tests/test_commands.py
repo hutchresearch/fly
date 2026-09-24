@@ -25,8 +25,8 @@ def parse(*argv):
 
 def validate(*argv, on_head=True):
     out = io.StringIO()
-    with mock.patch.object(fly, "on_cluster_head", return_value=on_head), redirect_stdout(out):
-        valid = fly.valid_args(parse(*argv))
+    with redirect_stdout(out):
+        valid = fly.valid_args(parse(*argv), "cluster", on_head)
     return valid, out.getvalue()
 
 

@@ -1,6 +1,19 @@
 # **Overview:**
 fly.py is a command-line tool that simplifies dispatching condor jobs to the
-WWU CSCI department cluster.
+WWU CSCI department cluster or to idle CS lab machines.
+
+# **Cluster or lab?**
+fly submits to the pool of the machine you run it on:
+* **Cluster:** run fly on ``csci-head.cluster.cs.wwu.edu``. Jobs use the
+  cluster's filesystem (``/cluster/home/...``).
+* **Lab machines:** run fly on ``csci-lab-head`` (``ssh -p 922 csci-lab-head``)
+  or on a CS lab computer. Jobs run on idle lab machines as your CS user, with
+  your usual CS files; ``/cluster`` is not available there. A lab machine
+  suspends your job while someone is using it and puts it back in the queue
+  if that lasts 10 minutes, so prefer jobs that are short or can resume.
+  Lab machines have more GPU choice (4 to 24 GB cards).
+* To submit from a lab computer, first fetch a token once:
+  ``ssh -p 922 csci-lab-head condor_token_fetch -token csci-lab-head``.
 
 # **Usage Examples**
 ```sh
@@ -12,8 +25,9 @@ fly.py --commands_fn commands.txt --conda /cluster/home/$(whoami)/anaconda3 --co
 Call ``fly.py -h`` to see all of the options available.
 
 To see what fly would submit without submitting anything, add ``--pretend``.
-It works on any machine and prints the generated condor files; on
-csci-head you can then check them with ``condor_submit -dry-run - FILE``.
+It works on any machine and prints the generated condor files; on the head
+node you can then check them with ``condor_submit -dry-run - FILE``. On a
+machine outside both pools, ``--pool lab`` previews a lab submission.
 fly exits with condor_submit's exit status, so scripts can detect failed
 submissions.
 

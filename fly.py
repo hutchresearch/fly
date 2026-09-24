@@ -9,14 +9,22 @@ import argparse
 from datetime import datetime
 import getpass
 import os
+import re
 import shlex
-import socket
 import stat
 import subprocess
 import sys
 import tempfile
 
 CLUSTER_HEAD = "csci-head.cluster.cs.wwu.edu"
+LAB_HEAD = "csci-lab-head.cs.wwu.edu"
+# fly submits to the pool of the machine it runs on, identified by the
+# central manager (COLLECTOR_HOST) in its HTCondor configuration.
+SUBMIT_POOLS = {CLUSTER_HEAD: "cluster", LAB_HEAD: "lab"}
+POOL_HEADS = {"cluster": CLUSTER_HEAD, "lab": LAB_HEAD}
+# PoolName advertised by each pool's machines. The pools flock to each
+# other, so jobs are pinned to the pool they were submitted to.
+POOL_NAMES = {"cluster": "CSCI Cluster", "lab": "CSCI Lab Cluster"}
 
 # Nominal GPU memory sizes (GB) of the cards in the CSCI pools. A --gpu_mem
 # request snaps up to the smallest of these, and each size is matched as
@@ -27,9 +35,9 @@ GPU_MIB_PER_NOMINAL_GB = 950
 # Larger cards are reserved for jobs that need them: a job may only use cards
 # below the next reserved size above its request.
 RESERVED_GPU_TIERS = (16, 24, 80)
-# Nominal GPU sizes fly can schedule onto (the H100s require preemption
-# opt-in and are not available through fly).
-POOL_GPU_TIERS = (11,)
+# Nominal GPU sizes fly can schedule onto in each pool (the cluster's H100s
+# require preemption opt-in and are not available through fly).
+POOL_GPU_TIERS = {"cluster": (11,), "lab": (4, 6, 8, 11, 12, 16, 24)}
 
 
 def main():
@@ -38,12 +46,15 @@ def main():
     """
     # Parse args
     args = parse_all_args()
-    if not valid_args(args):
-        sys.exit("EXITING: Invalid arguments")
+    detected = detect_pool()
 
     # Confirm proper run location (previews work anywhere)
-    if not args.pretend and not on_cluster_head():
-        sys.exit("EXITING: Jobs must be dispatched from " + CLUSTER_HEAD)
+    if not args.pretend and detected is None:
+        sys.exit("EXITING: Jobs must be submitted from %s (cluster) or from %s or a CS lab machine (lab)"
+                 % (CLUSTER_HEAD, LAB_HEAD))
+    pool = args.pool or detected or "cluster"
+    if not valid_args(args, pool, detected is not None):
+        sys.exit("EXITING: Invalid arguments")
 
     # Create and launch the job(s)
     if args.pretend:
@@ -51,35 +62,48 @@ def main():
     else:
         job_dir = make_job_dir(args.condor_dir)
 
-    submit_fn = make_job_files(job_dir, args, read_commands(args))
+    submit_fn = make_job_files(job_dir, args, read_commands(args), pool)
     if args.interactive:
         if args.venv or args.conda:
             print("Note: interactive jobs start a plain shell, so fly's environment setup does not run. "
                   "Activate it yourself once the shell starts.", file=sys.stderr)
+        if pool == "lab":
+            print("Note: lab machines suspend jobs while someone is using them, and end the session "
+                  "if that lasts 10 minutes.", file=sys.stderr)
         cmd = ["condor_submit", "-interactive", submit_fn]
     else:
         cmd = ["condor_submit", submit_fn]
 
     if args.pretend:
-        show_pretend(job_dir, cmd)
+        show_pretend(job_dir, cmd, pool)
         return 0
-    return submit(cmd)
+    return submit(cmd, pool)
 
 
-def submit(cmd):
+def submit(cmd, pool):
     """ Runs a condor submit command, passing its output through.
 
         Returns:
             int: the command's exit status
     """
+    interactive = "-interactive" in cmd
     try:
-        return subprocess.run(cmd).returncode
+        # Interactive sessions keep the terminal; otherwise watch stderr for
+        # authentication failures to give lab users the fix.
+        result = subprocess.run(cmd, stderr=None if interactive else subprocess.PIPE, universal_newlines=True)
     except FileNotFoundError:
-        print("EXITING: %s not found. Are you on %s?" % (cmd[0], CLUSTER_HEAD), file=sys.stderr)
+        print("EXITING: %s not found. Is HTCondor installed here?" % cmd[0], file=sys.stderr)
         return 1
+    if not interactive:
+        sys.stderr.write(result.stderr)
+        if result.returncode != 0 and pool == "lab" and re.search("authenticat", result.stderr, re.I):
+            print("\nIf you are on a lab machine, you may need a token for %s. Fetch one with:\n"
+                  "  ssh -p 922 %s condor_token_fetch -token csci-lab-head" % (LAB_HEAD, LAB_HEAD),
+                  file=sys.stderr)
+    return result.returncode
 
 
-def show_pretend(job_dir, cmd, max_commands=5):
+def show_pretend(job_dir, cmd, pool, max_commands=5):
     """ Prints the generated files instead of submitting them. """
     paths = [os.path.join(job_dir, name) for name in sorted(os.listdir(job_dir))]
     cmd_dir = os.path.join(job_dir, "cmd")
@@ -92,16 +116,43 @@ def show_pretend(job_dir, cmd, max_commands=5):
     if len(commands) > max_commands:
         print("# ... and %d more command files in %s\n" % (len(commands) - max_commands, cmd_dir))
     print("# Not submitted. fly would run:\n#   %s" % " ".join(shlex.quote(c) for c in cmd))
-    print("# To check the files with HTCondor's own parser, on %s run:" % CLUSTER_HEAD)
+    print("# To check the files with HTCondor's own parser, on %s run:" % POOL_HEADS[pool])
     print("#   condor_submit -dry-run - %s" % shlex.quote(cmd[-1]))
 
 
-def on_cluster_head():
-    """ Checks whether this is the cluster head node. Its nodename has been the
-        short "csci-head" since the 2025 OS reinstall, so compare FQDNs too.
+def condor_config(name):
+    """ Returns an HTCondor configuration value, or None if it's undefined or
+        HTCondor isn't installed.
     """
-    nodename = os.uname().nodename
-    return nodename in ("csci-head", CLUSTER_HEAD) or socket.getfqdn() == CLUSTER_HEAD
+    try:
+        result = subprocess.run(["condor_config_val", name], stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, universal_newlines=True)
+    except FileNotFoundError:
+        return None
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
+def detect_pool():
+    """ Works out which pool this machine submits to from its HTCondor
+        configuration: its central manager, and its schedd if configured.
+
+        Returns:
+            str or None: "cluster", "lab", or None if this isn't a known
+            submit machine (or the configuration is ambiguous)
+    """
+    def pool_of(hosts):
+        names = {host.split(":")[0].lower() for host in re.split(r"[\s,]+", hosts) if host}
+        pools = {SUBMIT_POOLS.get(name) for name in names}
+        return pools.pop() if len(pools) == 1 else None
+
+    collector = condor_config("COLLECTOR_HOST")
+    if collector is None:
+        return None
+    pool = pool_of(collector)
+    schedd = condor_config("SCHEDD_HOST")
+    if schedd is not None and pool_of(schedd) != pool:
+        return None
+    return pool
 
 
 def make_job_dir(condor_dir):
@@ -170,7 +221,7 @@ def write_wrapper(job_dir, args):
     return wrapper_fn
 
 
-def make_job_files(job_dir, args, commands):
+def make_job_files(job_dir, args, commands, pool="cluster"):
     """ Creates the condor submit file, the wrapper script, and one command
         file per job (cmd/0.sh, cmd/1.sh, ...). Command text is written
         verbatim and never passes through condor's own parser.
@@ -195,11 +246,16 @@ def make_job_files(job_dir, args, commands):
         lines.append("priority = -10")
     if args.gpus > 0:
         lines.append("require_gpus = " + gpu_constraint(args.gpu_mem))
+    requirements = "TARGET.PoolName == \"%s\"" % POOL_NAMES[pool]
     if args.requirements:
-        lines.append("requirements = " + args.requirements)
+        requirements += " && (" + args.requirements + ")"
+    lines.append("requirements = " + requirements)
     if args.rank:
         lines.append("rank = " + args.rank)
-    # Jobs read and write the cluster's shared filesystem directly.
+    if pool == "lab":
+        # Lab machines only accept jobs that ask for them.
+        lines.append("+CSCI_GrpDesktop = True")
+    # Jobs read and write the pool's shared filesystem directly.
     lines.append("should_transfer_files = NO")
     lines += ["executable = " + write_wrapper(job_dir, args),
               "output = " + os.path.join(job_dir, "$(Process).out"),
@@ -246,12 +302,12 @@ def gpu_band(gpu_mem):
     return tier, upper
 
 
-def gpu_request_fits(gpu_mem):
-    """ Checks that some card fly can use falls within the request's band. """
+def gpu_request_fits(gpu_mem, pool):
+    """ Checks that some card fly can use in the pool falls within the request's band. """
     if gpu_tier(gpu_mem) is None:
         return False
     lower, upper = gpu_band(gpu_mem)
-    return any(lower <= t and (upper is None or t < upper) for t in POOL_GPU_TIERS)
+    return any(lower <= t and (upper is None or t < upper) for t in POOL_GPU_TIERS[pool])
 
 
 def gpu_constraint(gpu_mem):
@@ -276,6 +332,10 @@ def parse_all_args():
                         action="store_true",
                         help="Print the generated condor files instead of submitting them. "
                              "Works on any machine. (flag)")
+    parser.add_argument("--pool",
+                        choices=("cluster", "lab"),
+                        help="With --pretend on a machine outside both pools, which pool to preview for "
+                             "[default: cluster]")
 
     # Executable Settings
     command = parser.add_mutually_exclusive_group(required=True)
@@ -354,7 +414,7 @@ def parse_all_args():
     return parser.parse_args()
 
 
-def valid_args(args):
+def valid_args(args, pool="cluster", on_submit_host=True):
     """ Checks if the arguments provided will allow for a successful job dispatching.
 
     Returns:
@@ -362,7 +422,10 @@ def valid_args(args):
     """
     is_valid = True
     # Paths are only checked where the job will run (previews work anywhere).
-    check_paths = on_cluster_head()
+    check_paths = on_submit_host
+    if args.pool is not None and not args.pretend:
+        print("\tError: --pool only works with --pretend; fly submits to the pool of the machine it runs on")
+        is_valid = False
     # Condor expands $(...) macros in submit-file paths
     if "$" in os.path.abspath(args.condor_dir):
         print("\tError: --condor_dir cannot contain '$' (condor would treat it as a macro):", args.condor_dir)
@@ -423,9 +486,9 @@ def valid_args(args):
     elif args.gpu_mem > 0 and args.gpus == 0:
         print("\tError: --gpu_mem requires --gpus")
         is_valid = False
-    elif args.gpus > 0 and not gpu_request_fits(args.gpu_mem):
-        print("\tError: No GPUs available to fly match --gpu_mem %d. Available card sizes (GB): %s"
-              % (args.gpu_mem, ", ".join(str(t) for t in POOL_GPU_TIERS)))
+    elif args.gpus > 0 and not gpu_request_fits(args.gpu_mem, pool):
+        print("\tError: No GPUs available to fly in the %s pool match --gpu_mem %d. Card sizes there (GB): %s"
+              % (pool, args.gpu_mem, ", ".join(str(t) for t in POOL_GPU_TIERS[pool])))
         is_valid = False
     if args.J < 0:
         print("\tError: Invalid number of jobs to run at once specified:", args.J)
