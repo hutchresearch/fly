@@ -11,6 +11,14 @@ fly.py --commands_fn commands.txt --conda /cluster/home/$(whoami)/anaconda3 --co
 ```
 Call ``fly.py -h`` to see all of the options available.
 
+# **GPUs**
+``--gpu_mem`` is the card's nominal memory size in GB, as printed on the box
+(e.g. 11 for an RTX 2080 Ti). Requests are rounded up to the next card size
+that exists. Larger cards are reserved for jobs that need them, so a small
+request, or ``--gpus`` without ``--gpu_mem``, only uses the smaller cards. If
+no card fly can use is big enough, fly exits with an error rather than
+submitting a job that can never start.
+
 # **Tips:**
 * Condor must be able to run the commands on the remote machine, so please
   * Make sure you have a proper ``#!`` at the top of any scripts you wish to run
