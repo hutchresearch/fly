@@ -61,14 +61,20 @@ class GpuBandTest(unittest.TestCase):
 
     def test_above_largest_card_is_rejected(self):
         self.assertIsNone(fly.gpu_tier(81))
-        self.assertFalse(fly.gpu_request_fits(81))
+        self.assertFalse(fly.gpu_request_fits(81, "cluster"))
+        self.assertFalse(fly.gpu_request_fits(81, "lab"))
 
     def test_fly_pool_fit(self):
-        # fly schedules onto the cluster's 11 GB cards only.
+        # On the cluster, fly schedules onto the 11 GB cards only.
         for gpu_mem in (0, 1, 8, 11):
-            self.assertTrue(fly.gpu_request_fits(gpu_mem), gpu_mem)
+            self.assertTrue(fly.gpu_request_fits(gpu_mem, "cluster"), gpu_mem)
         for gpu_mem in (12, 16, 24, 80):
-            self.assertFalse(fly.gpu_request_fits(gpu_mem), gpu_mem)
+            self.assertFalse(fly.gpu_request_fits(gpu_mem, "cluster"), gpu_mem)
+        # The lab has cards up to 24 GB, and no H100s.
+        for gpu_mem in (0, 4, 11, 12, 16, 24):
+            self.assertTrue(fly.gpu_request_fits(gpu_mem, "lab"), gpu_mem)
+        for gpu_mem in (25, 80):
+            self.assertFalse(fly.gpu_request_fits(gpu_mem, "lab"), gpu_mem)
 
     def test_constraint_text(self):
         self.assertEqual(fly.gpu_constraint(0), "GlobalMemoryMb < 15200")
