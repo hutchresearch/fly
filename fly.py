@@ -9,8 +9,11 @@ import argparse
 from datetime import datetime
 import getpass
 import os
+import socket
 import stat
 import sys
+
+CLUSTER_HEAD = "csci-head.cluster.cs.wwu.edu"
 
 # Nominal GPU memory sizes (GB) of the cards in the CSCI pools. A --gpu_mem
 # request snaps up to the smallest of these, and each size is matched as
@@ -31,8 +34,8 @@ def main():
             Performs the heavy lifting for the submission of jobs to condor.
     """
     # Confirm proper run location
-    if os.uname().nodename != "csci-head.cluster.cs.wwu.edu":
-        sys.exit("EXITING: Jobs must be dispatched from csci-head.cluster.cs.wwu.edu")
+    if not on_cluster_head():
+        sys.exit("EXITING: Jobs must be dispatched from " + CLUSTER_HEAD)
 
     # Parse args
     args = parse_all_args()
@@ -68,6 +71,14 @@ def main():
         dag_fn = make_dag_file(args.J,job_options)
         os.system("condor_submit_dag -maxjobs %d %s" % (args.J,dag_fn))
     return
+
+
+def on_cluster_head():
+    """ Checks whether this is the cluster head node. Its nodename has been the
+        short "csci-head" since the 2025 OS reinstall, so compare FQDNs too.
+    """
+    nodename = os.uname().nodename
+    return nodename in ("csci-head", CLUSTER_HEAD) or socket.getfqdn() == CLUSTER_HEAD
 
 
 def make_dag_file(J,job_options):
