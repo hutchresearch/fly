@@ -12,6 +12,20 @@ import os
 import stat
 import sys
 
+# Nominal GPU memory sizes (GB) of the cards in the CSCI pools. A --gpu_mem
+# request snaps up to the smallest of these, and each size is matched as
+# at least size * GPU_MIB_PER_NOMINAL_GB MiB, because cards advertise a bit
+# less than their nominal size (an "11 GB" RTX 2080 Ti advertises 10835 MiB).
+GPU_MEM_TIERS = (4, 6, 8, 11, 12, 16, 24, 80)
+GPU_MIB_PER_NOMINAL_GB = 950
+# Larger cards are reserved for jobs that need them: a job may only use cards
+# below the next reserved size above its request.
+RESERVED_GPU_TIERS = (16, 24, 80)
+# Nominal GPU sizes fly can schedule onto (the H100s require preemption
+# opt-in and are not available through fly).
+POOL_GPU_TIERS = (11,)
+
+
 def main():
     """ Main Function:
             Performs the heavy lifting for the submission of jobs to condor.
@@ -114,10 +128,10 @@ def make_job_file(job_dir,job_name,cores,mem,gpus,gpu_mem,low_prio,requirements,
     if low_prio:
         job_file.write("priority = -10\n")
     if gpus > 0:
-        job_file.write("requirements = (CUDAGlobalMemoryMb >= " + str(gpu_mem * 1000) + ")\n")
-    if requirements is not "":
+        job_file.write("require_gpus = " + gpu_constraint(gpu_mem) + "\n")
+    if requirements:
         job_file.write("requirements = " + requirements + "\n")
-    if rank is not "":
+    if rank:
         job_file.write("rank = " + rank + "\n")
 
     # Log Files
@@ -158,6 +172,49 @@ def make_job_file(job_dir,job_name,cores,mem,gpus,gpu_mem,low_prio,requirements,
 
     job_file.close()
     return job_fn
+
+
+def gpu_tier(gpu_mem):
+    """ Snaps a --gpu_mem request (GB) up to a nominal GPU size.
+
+        Returns:
+            int or None: the nominal size, 0 for no request, or None if the
+            request is larger than any known card.
+    """
+    if gpu_mem == 0:
+        return 0
+    for tier in GPU_MEM_TIERS:
+        if tier >= gpu_mem:
+            return tier
+    return None
+
+
+def gpu_band(gpu_mem):
+    """ Returns the (lowest, next reserved) nominal sizes a request may use.
+        The upper bound is exclusive and None when unbounded.
+    """
+    tier = gpu_tier(gpu_mem)
+    upper = next((t for t in RESERVED_GPU_TIERS if t > tier), None)
+    return tier, upper
+
+
+def gpu_request_fits(gpu_mem):
+    """ Checks that some card fly can use falls within the request's band. """
+    if gpu_tier(gpu_mem) is None:
+        return False
+    lower, upper = gpu_band(gpu_mem)
+    return any(lower <= t and (upper is None or t < upper) for t in POOL_GPU_TIERS)
+
+
+def gpu_constraint(gpu_mem):
+    """ Builds the per-GPU require_gpus expression for a --gpu_mem request. """
+    lower, upper = gpu_band(gpu_mem)
+    clauses = []
+    if lower:
+        clauses.append("GlobalMemoryMb >= %d" % (lower * GPU_MIB_PER_NOMINAL_GB))
+    if upper is not None:
+        clauses.append("GlobalMemoryMb < %d" % (upper * GPU_MIB_PER_NOMINAL_GB))
+    return " && ".join(clauses)
 
 
 def parse_all_args():
@@ -219,7 +276,9 @@ def parse_all_args():
                         default=0)
     parser.add_argument("--gpu_mem",
                         type=int,
-                        help="The amount of GPU memory needed for job, in GB. (int) [default: 0]",
+                        help="Nominal GPU memory needed, in GB, as printed on the card (e.g. 11 for an "
+                             "RTX 2080 Ti). Rounded up to the next card size; larger cards are reserved "
+                             "for jobs that need them. (int) [default: 0 --> smallest cards]",
                         default=0)
     parser.add_argument("--requirements",
                         type=str,
@@ -270,7 +329,7 @@ def valid_args(args):
         print("\tError: Failed to find the specified venv directory:", args.conda)
         is_valid = False
     if args.conda is not None and args.venv is not None:
-        print("\Error: You cannot specify both a virtual environment and a anaconda environment")
+        print("\tError: You cannot specify both a virtual environment and a anaconda environment")
         is_valid = False
     
     # System Requirements
@@ -284,7 +343,14 @@ def valid_args(args):
         print("\tError: Invalid number of GPUs specified:", args.gpus)
         is_valid = False
     if args.gpu_mem < 0:
-        print("\tError: Invalid amount of GPU memory specified:", args.gpus)
+        print("\tError: Invalid amount of GPU memory specified:", args.gpu_mem)
+        is_valid = False
+    elif args.gpu_mem > 0 and args.gpus == 0:
+        print("\tError: --gpu_mem requires --gpus")
+        is_valid = False
+    elif args.gpus > 0 and not gpu_request_fits(args.gpu_mem):
+        print("\tError: No GPUs available to fly match --gpu_mem %d. Available card sizes (GB): %s"
+              % (args.gpu_mem, ", ".join(str(t) for t in POOL_GPU_TIERS)))
         is_valid = False
     if args.J < 0:
         print("\tError: Invalid number of concurrent jobs specified:", args.J)
