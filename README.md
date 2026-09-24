@@ -25,20 +25,40 @@ request, or ``--gpus`` without ``--gpu_mem``, only uses the smaller cards. If
 no card fly can use is big enough, fly exits with an error rather than
 submitting a job that can never start.
 
-# **Tips:**
-* Condor must be able to run the commands on the remote machine, so please
-  * Make sure you have a proper ``#!`` at the top of any scripts you wish to run
-    via condor.
-    * E.g. ``#! /usr/bin/env python3``
-  * Make sure you have given the execute permission to your user for any binary
-    or script you wish to run via condor.
-  * Please provide the absolute path for the command you wish to run
-    * You may use ``which command`` to find the absolute path for command
+# **Commands**
+fly runs each command exactly as if you typed it at a bash prompt, in the
+directory you ran fly from, on the cluster's shared filesystem. Quotes,
+``$VARIABLES``, ``$(...)``, pipes, ``>`` redirects, and ``&&`` all work:
+```sh
+fly.py --command "python3 train.py --name 'my run' > train.log 2>&1"
+```
+Because bash interprets the command, quote any argument containing
+characters bash treats specially (``* ? | ; & $ < >``), just as you would
+in a terminal: ``--pattern '*.csv'``.
 
+A ``--commands_fn`` file holds one command per line, and each line runs as
+its own job. Blank lines and lines starting with ``#`` are skipped.
+``--queue_count N`` runs ``--command`` N times. ``--J N`` keeps at most N
+jobs from the batch in the queue at once, adding the rest as earlier ones
+finish.
+
+With ``--venv`` or ``--conda``, the environment is activated before your
+command runs; if activation fails, the job stops with an error in its
+``.err`` file instead of running with the wrong Python. Interactive jobs
+(``-i``) start a plain shell, so activate your environment yourself there.
+
+# **Tips:**
+* If you run a script directly (``./train.py`` rather than
+  ``python3 train.py``), give it a ``#!`` line (e.g. ``#! /usr/bin/env python3``)
+  and execute permission (``chmod +x train.py``).
+* Python buffers standard output when it isn't a terminal, so ``.out`` files
+  may stay empty until the job ends. Use ``python3 -u`` or ``print(..., flush=True)``
+  to see output as it happens.
+* Use ``--pretend`` to check what fly will submit before submitting it.
 
 # **Helpful Condor Commands**
 * condor_q -> check current queue
-  * You can watch your status with ``watch -N 5 condor_q`` (but do not leave this running for too long... it bogs down the job scheduler)
+  * ``condor_watch_q`` shows your jobs updating live without loading the scheduler
 * condor_q -hold -> check what error caused your job to be placed into the holding queue
 * condor_q -better-analyze -> see how many machines can run the job you submitted and why
 * condor_status -> check which computers are being used
@@ -46,18 +66,20 @@ submitting a job that can never start.
 * condor_rm (job_id_number) -> cancel a running job
 
 # **fly Output Files**
-In the condor directory (defaults to .condor_jobs), fly will create an output directory with the format USER_YYYYMMDD_HHmmss_ff (USER is your username, ff is microseconds sections).  Within that, it will produce a set of files of the format NUM.EXT.
-* NUM is the job number.  If you only submit one job, it will be 0.  If you submit N jobs, you will have sets of files for NUM=0,...,N-1.
-* EXT is one of the following
-  * err - the contents of your command's standard out and any condor error output
-  * job - the job file automatically created for you 
-  * log - condor's logging
-  * out - the contents of your command's standard out
-  * sh - the wrapper script that actually calls your command(s)
-* The *.out files are buffered and may only be written once the job has completed.
+In the condor directory (``--condor_dir``, default ``.condor_jobs``), fly
+creates a directory named USER_YYYYMMDD_HHMMSS_microseconds containing:
+* ``submit.job`` - the condor submit file
+* ``wrapper.sh`` - sets up your environment, then runs a command file
+* ``cmd/N.sh`` - your commands, one file per line of ``--commands_fn`` (or just ``cmd/0.sh``)
+* ``N.out`` / ``N.err`` - standard output / standard error of job N (N = 0, 1, ...)
+* ``condor.log`` - condor's log of events (submitted, started, finished) for every job
 
-I recommend you design your scripts to write any output logging directly to a file that you specify, instead of relying on standard out or standard error.  If you do so, you may not ever need to inspect any of the files produced for you in the output directory.
+I recommend you design your scripts to write any output logging directly to
+a file that you specify, instead of relying on standard out or standard
+error. If you do so, you may not ever need to inspect any of the files
+produced for you in the output directory.
 
 ### Condor Documentation:
-* [Condor: General](https://htcondor.readthedocs.io/en/stable/)
-* [Condor: Job Files](https://htcondor.readthedocs.io/en/stable/classad-attributes/job-classad-attributes.html)
+* [WWU cluster documentation](https://cluster.cs.wwu.edu/)
+* [HTCondor 25.0 manual](https://htcondor.readthedocs.io/en/25.0/)
+* [condor_submit reference](https://htcondor.readthedocs.io/en/25.0/man-pages/condor_submit.html)

@@ -44,7 +44,7 @@ class SubmitTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], "condor_submit")
-        self.assertTrue(os.path.isabs(calls[0][1]) and calls[0][1].endswith("0.job"), calls[0])
+        self.assertTrue(os.path.isabs(calls[0][1]) and calls[0][1].endswith("submit.job"), calls[0])
 
     def test_propagates_submit_failure(self):
         status, _, _, _ = run_main("--command", "/bin/true", "--condor_dir", self.condor_dir(), returncode=1)
@@ -59,7 +59,7 @@ class SubmitTest(unittest.TestCase):
     def test_interactive_flag_is_its_own_argument(self):
         _, calls, _, _ = run_main("--interactive", "--condor_dir", self.condor_dir())
         self.assertEqual(calls[0][:2], ["condor_submit", "-interactive"])
-        self.assertTrue(calls[0][2].endswith("0.job"))
+        self.assertTrue(calls[0][2].endswith("submit.job"))
 
     def test_condor_dir_with_spaces_and_metacharacters(self):
         weird = self.condor_dir("my jobs; `touch pwned` & 'x' \"y\"")
@@ -75,14 +75,15 @@ class SubmitTest(unittest.TestCase):
         self.assertIn("cannot contain '$'", out)
         self.assertEqual(calls, [])
 
-    def test_pretend_dag_suggests_dag_check(self):
+    def test_pretend_with_J_previews_one_submit_file(self):
         commands = os.path.join(self.tmp.name, "commands.txt")
         with open(commands, "w") as f:
             f.write("/bin/true\n/bin/false\n")
         status, calls, out, _ = run_main("--pretend", "--commands_fn", commands, "--J", "1")
         self.assertEqual((status, calls), (0, []))
-        self.assertIn("condor_submit_dag -no_submit", out)
-        self.assertNotIn("condor_submit -dry-run", out)
+        self.assertIn("max_materialize = 1", out)
+        self.assertRegex(out, r"condor_submit -dry-run - \S+/submit\.job")
+        self.assertNotIn("dag", out.lower())
 
     def test_refuses_to_submit_off_head_node(self):
         status, calls, _, _ = run_main("--command", "/bin/true", "--condor_dir", self.condor_dir(), on_head=False)
