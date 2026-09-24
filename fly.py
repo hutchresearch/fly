@@ -107,8 +107,12 @@ def show_pretend(job_dir, cmd):
         with open(path) as f:
             print(f.read())
     print("# Not submitted. fly would run:\n#   %s" % " ".join(shlex.quote(c) for c in cmd))
-    print("# To check the files with HTCondor's own parser, on %s run:" % CLUSTER_HEAD)
-    print("#   condor_submit -dry-run - %s" % shlex.quote(cmd[-1]))
+    if cmd[0] == "condor_submit_dag":
+        print("# To check the DAG without submitting it, on %s run:" % CLUSTER_HEAD)
+        print("#   condor_submit_dag -no_submit %s" % shlex.quote(cmd[-1]))
+    else:
+        print("# To check the files with HTCondor's own parser, on %s run:" % CLUSTER_HEAD)
+        print("#   condor_submit -dry-run - %s" % shlex.quote(cmd[-1]))
 
 
 def on_cluster_head():
@@ -359,6 +363,11 @@ def valid_args(args):
         boolean: True if all args were assigned valid values, else false.
     """
     is_valid = True
+    # Condor expands $(...) macros in submit-file paths
+    if "$" in os.path.abspath(args.condor_dir):
+        print("\tError: --condor_dir cannot contain '$' (condor would treat it as a macro):", args.condor_dir)
+        is_valid = False
+
     # Commands Options
     if args.commands_fn is not None and not os.path.exists(args.commands_fn):
         print("\tError: Unable to find the specified command file:", args.commands_fn)

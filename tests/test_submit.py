@@ -62,12 +62,27 @@ class SubmitTest(unittest.TestCase):
         self.assertTrue(calls[0][2].endswith("0.job"))
 
     def test_condor_dir_with_spaces_and_metacharacters(self):
-        weird = self.condor_dir("my jobs; $(touch pwned) 'x'")
+        weird = self.condor_dir("my jobs; `touch pwned` & 'x' \"y\"")
         status, calls, _, _ = run_main("--command", "/bin/true", "--condor_dir", weird)
         self.assertEqual(status, 0)
         self.assertTrue(calls[0][1].startswith(weird))
         self.assertTrue(os.path.exists(calls[0][1]))
         self.assertFalse(os.path.exists("pwned"))
+
+    def test_condor_dir_with_macro_syntax_is_rejected(self):
+        status, calls, out, _ = run_main("--command", "/bin/true", "--condor_dir", self.condor_dir("jobs$(Process)"))
+        self.assertEqual(status, "EXITING: Invalid arguments")
+        self.assertIn("cannot contain '$'", out)
+        self.assertEqual(calls, [])
+
+    def test_pretend_dag_suggests_dag_check(self):
+        commands = os.path.join(self.tmp.name, "commands.txt")
+        with open(commands, "w") as f:
+            f.write("/bin/true\n/bin/false\n")
+        status, calls, out, _ = run_main("--pretend", "--commands_fn", commands, "--J", "1")
+        self.assertEqual((status, calls), (0, []))
+        self.assertIn("condor_submit_dag -no_submit", out)
+        self.assertNotIn("condor_submit -dry-run", out)
 
     def test_refuses_to_submit_off_head_node(self):
         status, calls, _, _ = run_main("--command", "/bin/true", "--condor_dir", self.condor_dir(), on_head=False)
